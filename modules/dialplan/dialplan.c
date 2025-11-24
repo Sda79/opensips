@@ -86,7 +86,6 @@ static str database_url = {NULL, 0};
 
 void *dp_srg = NULL;
 
-
 static const param_export_t mod_params[]={
 	{ "partition",		STR_PARAM|USE_FUNC_PARAM,
 				(void*)dp_set_partition},
@@ -263,7 +262,7 @@ static int dp_create_head(const str *in)
 		/* support for the "default: my_part" syntax */
 		if (!props->next && !params->next && !ZSTR(params->s)) {
 			dp_df_part = params->s;
-			LM_DBG("changing the default partition to '%.*s'\n",
+			printf("changing the default partition to '%.*s'\n",
 			       dp_df_part.len, dp_df_part.s);
 			return 0;
 		}
@@ -332,10 +331,10 @@ static void dp_print_list(void)
 	dp_head_p start = dp_hlist;
 
 	if (!start)
-		LM_DBG("List is empty\n");
+		printf("List is empty\n");
 
 	while (start != NULL) {
-		LM_DBG("Partition=[%.*s] url=[%s] table=[%.*s] next=[%p]\n",
+		printf("Partition=[%.*s] url=[%s] table=[%.*s] next=[%p]\n",
 			start->partition.len, start->partition.s,
 			db_url_escape(&start->dp_db_url),
 			start->dp_table_name.len, start->dp_table_name.s, start->next);
@@ -346,7 +345,7 @@ static void dp_print_list(void)
 
 static int mod_init(void)
 {
-	LM_INFO("initializing module...\n");
+	printf("initializing module...\n");
 	init_db_url(default_dp_db_url, 1 /* can be null */);
 
 	default_dp_table.len    = strlen(default_dp_table.s);
@@ -397,6 +396,9 @@ static int mod_init(void)
 		LM_ERR("could not initialize data\n");
 		return -1;
 	}
+  
+  gctx = pcre2_general_context_create(wrap_shm_malloc, wrap_shm_free, NULL);
+  comp_ctx = pcre2_compile_context_create(gctx);
 
 	return 0;
 }
@@ -513,26 +515,26 @@ static int dp_translate_f(struct sip_msg *msg, int* dpid, str *in_str,
 	if (!msg)
 		return -1;
 
-	LM_DBG("dpid is %i partition is %.*s\n", *dpid,
+	printf("dpid is %i partition is %.*s\n", *dpid,
 		part->partition.len, part->partition.s);
 
-	LM_DBG("input is %.*s\n", in_str->len, in_str->s);
+	printf("input is %.*s\n", in_str->len, in_str->s);
 
 	/* ref the data for reading */
 	lock_start_read( part->ref_lock );
 
 	if ((idp = select_dpid(part, *dpid, part->crt_index)) == 0) {
-		LM_DBG("no information available for dpid %i\n", *dpid);
+		printf("no information available for dpid %i\n", *dpid);
 		goto error;
 	}
-	LM_DBG("checking with dpid %i\n", idp->dp_id);
+	printf("checking with dpid %i\n", idp->dp_id);
 
 	if (translate(msg, *in_str, &out_str, idp, attr_var?&attrs:NULL) != 0) {
-		LM_DBG("could not translate\n");
+		printf("could not translate\n");
 		goto error;
 	}
 
-	LM_DBG("input %.*s with dpid %i => output %.*s\n",
+	printf("input %.*s with dpid %i => output %.*s\n",
 			in_str->len, in_str->s, idp->dp_id, out_str.len, out_str.s);
 
 	if (out_var) {
@@ -749,7 +751,7 @@ static mi_response_t *mi_reload_rules_1(const mi_params_t *params,
 	if (!el)
 			return init_mi_error( 400, MI_SSTR("Partition not found"));
 	/* Reload rules from specified  partition */
-	LM_DBG("Reloading rules from partition %.*s\n", table.len, table.s);
+	printf("Reloading rules from partition %.*s\n", table.len, table.s);
 	if(dp_load_db(el,0) != 0){
 			LM_ERR("failed to reload database data\n");
 			return 0;
@@ -807,7 +809,7 @@ static mi_response_t *mi_translate(const mi_params_t *params,
 	}
 
 	if (translate(NULL, input, &output, idp, &attrs)!=0){
-		LM_DBG("could not translate %.*s with dpid %i\n",
+		printf("could not translate %.*s with dpid %i\n",
 			input.len, input.s, idp->dp_id);
 		lock_stop_read( part->ref_lock );
 		return init_mi_error(404, MI_SSTR("No translation"));
@@ -815,7 +817,7 @@ static mi_response_t *mi_translate(const mi_params_t *params,
 	/* we are done reading -> unref the data */
 	lock_stop_read( part->ref_lock );
 
-	LM_DBG("input %.*s with dpid %i => output %.*s\n",
+	printf("input %.*s with dpid %i => output %.*s\n",
 			input.len, input.s, idp->dp_id, output.len, output.s);
 
 	resp = init_mi_result_object(&resp_obj);
@@ -869,51 +871,47 @@ static mi_response_t *mi_translate3(const mi_params_t *params,
 }
 
 
-void * wrap_shm_malloc(size_t size)
+void * wrap_shm_malloc(size_t size, void*)
 {
 	return shm_malloc(size);
 }
 
-void  wrap_shm_free(void * p )
+void  wrap_shm_free(void * p , void*)
 {
 	shm_free(p);
 }
 
 
-pcre * wrap_pcre_compile(char *  pattern, int flags)
+pcre2_code * wrap_pcre_compile(PCRE2_SPTR pattern, uint32_t flags)
 {
-		pcre * ret ;
+		pcre2_code * ret ;
 		func_malloc old_malloc ;
 		func_free old_free;
-		const char * error;
-		int erroffset;
-		int pcre_flags = 0;
+		int error;
+		PCRE2_SIZE erroffset;
+		uint32_t pcre_flags = 0;
 
-
-		old_malloc = pcre_malloc;
-		old_free = pcre_free;
-
-		pcre_malloc = wrap_shm_malloc;
-		pcre_free = wrap_shm_free;
+    //pcre2_general_context *gctx = pcre2_general_context_create(wrap_shm_malloc, wrap_shm_free, NULL);
 
 		if (flags & DP_CASE_INSENSITIVE)
-			pcre_flags |= PCRE_CASELESS;
-
-		ret = pcre_compile(
+			pcre_flags |= PCRE2_CASELESS;
+    
+    printf("compliling .............\n");
+		ret = pcre2_compile(
 				pattern,			/* the pattern */
-				pcre_flags,			/* default options */
+				PCRE2_ZERO_TERMINATED,
+        pcre_flags,
 				&error,				/* for error message */
-				&erroffset,			/* for error offset */
-				NULL);
-
-		pcre_malloc = old_malloc;
-		pcre_free = old_free;
+				&erroffset,		/* for error offset */
+				comp_ctx
+        );
+    printf("done\n"); 
+    //pcre2_general_context_free(gctx);
 
 		return ret;
 }
 
-void wrap_pcre_free( pcre* re)
+void wrap_pcre_free( pcre2_code* re )
 {
-	shm_free(re);
-
+	pcre2_code_free(re);
 }

@@ -103,18 +103,18 @@ error:
 #define MAX_MATCHES (100 * 3)
 
 static char dp_output_buf[MAX_PHONE_NB_DIGITS+1];
-static int matches[MAX_MATCHES];
+static PCRE2_SIZE *matches;
 
 int rule_translate(struct sip_msg *msg, str string, dpl_node_t * rule,
 		str * result)
 {
 	int repl_nb, offset, match_nb;
 	struct replace_with token;
-	pcre * subst_comp;
+	pcre2_code * subst_comp;
 	struct subst_expr * repl_comp;
 	pv_value_t sv;
 	str* uri;
-	int capturecount;
+	uint32_t capturecount;
 	char *match_begin;
 	int match_len;
 
@@ -126,19 +126,19 @@ int rule_translate(struct sip_msg *msg, str string, dpl_node_t * rule,
 	repl_comp 	= rule->repl_comp;
 
 	if(!repl_comp){
-		LM_DBG("null replacement\n");
+		printf("null replacement\n");
 		return 0;
 	}
 
 
 	if(subst_comp){
-
-		pcre_fullinfo(
+    printf("before pattern info\n");
+		pcre2_pattern_info(
 		subst_comp,                   /* the compiled pattern */
-		NULL,                 /* no extra data - we didn't study the pattern */
-		PCRE_INFO_CAPTURECOUNT ,  /* number of named substrings */
+		//NULL,                 /* no extra data - we didn't study the pattern */
+		PCRE2_INFO_CAPTURECOUNT ,  /* number of named substrings */
 		&capturecount);          /* where to put the answer */
-
+    printf("after pattern info\n");
 
 		/*just in case something went wrong at load time*/
 		if(repl_comp->max_pmatch > capturecount){
@@ -146,9 +146,10 @@ int rule_translate(struct sip_msg *msg, str string, dpl_node_t * rule,
 				"%i-th subexpr of the subst expr\n", repl_comp->max_pmatch);
 			return -1;
 		}
-
+    
+    printf("rule_translate - before test match\n");
 		/*search for the pattern from the compiled subst_exp*/
-		if(test_match(string, rule->subst_comp,matches,MAX_MATCHES) <= 0){
+		if(test_match(string, rule->subst_comp,matches) <= 0){
 			LM_ERR("the string %.*s "
 				"matched the match_exp %.*s but not the subst_exp %.*s!\n",
 				string.len, string.s,
@@ -156,28 +157,31 @@ int rule_translate(struct sip_msg *msg, str string, dpl_node_t * rule,
 				rule->subst_exp.len, rule->subst_exp.s);
 			return -1;
 		}
+    printf("rule_translate - after test match\n");
 	}
 
+  printf("before replacing string\n");
 	/*simply copy from the replacing string*/
 	if(!subst_comp || (repl_comp->n_escapes <=0)){
+    printf("fucked\n");
 		if(!repl_comp->replacement.s || repl_comp->replacement.len == 0){
 			LM_ERR("invalid replacing string\n");
 			goto error;
 		}
-		LM_DBG("simply replace the string, "
+		printf("simply replace the string, "
 			"subst_comp %p, n_escapes %i\n",subst_comp, repl_comp->n_escapes);
 		memcpy(result->s, repl_comp->replacement.s, repl_comp->replacement.len);
 		result->len = repl_comp->replacement.len;
 		result->s[result->len] = '\0';
 		return 0;
 	}
-
+  printf("after replacing string\n");
 	/* offset- offset in the replacement string */
 	result->len = repl_nb = offset = 0;
-
+  printf("n_escapes=%d\n", repl_comp->n_escapes);
 	while( repl_nb < repl_comp->n_escapes){
 		token = repl_comp->replace[repl_nb];
-
+    printf("token.size = %d, token.offset = %d, token.type = %d\n", token.size, token.offset, token.type);
 		if(offset< token.offset){
 			if((repl_comp->replacement.len < offset)||
 				(result->len + token.offset -offset >= MAX_PHONE_NB_DIGITS)){
@@ -187,18 +191,20 @@ int rule_translate(struct sip_msg *msg, str string, dpl_node_t * rule,
 			/*copy from the replacing string*/
 			memcpy(result->s + result->len, repl_comp->replacement.s + offset,
 					token.offset-offset);
+      printf("after memcpy, result->s = %s\n", result->s);
 			result->len += (token.offset - offset);
 			offset += token.offset-offset; /*update the offset*/
 		}
 
 		switch(token.type) {
 			case REPLACE_NMATCH:
+        printf("begin replace nmatch\n");
 				/*copy from the match subexpression*/
 				match_nb = token.u.nmatch;
-
+        printf("matches = %p\n", matches);
 				match_begin = string.s + matches[2*match_nb];
 				match_len = matches[2*match_nb+1] - matches[2*match_nb];
-
+        printf("after match begin/end\n");
 				if(result->len + match_len >= MAX_PHONE_NB_DIGITS){
 					LM_ERR("overflow\n");
 					goto error;
@@ -207,6 +213,7 @@ int rule_translate(struct sip_msg *msg, str string, dpl_node_t * rule,
 				memcpy(result->s + result->len, match_begin, match_len);
 				result->len += match_len;
 				offset += token.size; /*update the offset*/
+        printf("result = %s\n", result->s);
 				break;
 
 			case REPLACE_CHAR:
@@ -218,6 +225,7 @@ int rule_translate(struct sip_msg *msg, str string, dpl_node_t * rule,
 				result->len++;
 				break;
 			case REPLACE_URI:
+        printf("msg = %p\n", msg);
 				if ( msg== NULL || msg->first_line.type!=SIP_REQUEST){
 					LM_CRIT("uri substitution attempt on no request"
 						" message\n");
@@ -234,7 +242,7 @@ int rule_translate(struct sip_msg *msg, str string, dpl_node_t * rule,
 				break;
 			case REPLACE_SPEC:
 				if (msg== NULL) {
-					LM_DBG("replace spec attempted on no message\n");
+					printf("replace spec attempted on no message\n");
 					break;
 				}
 			if(pv_get_spec_value(msg,
@@ -277,7 +285,7 @@ error:
 #define DP_MAX_ATTRS_LEN	256
 static char dp_attrs_buf[DP_MAX_ATTRS_LEN+1];
 int translate(struct sip_msg *msg, str input, str * output, dpl_id_p idp, str * attrs) {
-
+  printf("------------------------------\n");
 	dpl_node_p rulep, rrulep;
 	int string_res = -1, regexp_res = -1, bucket;
 
@@ -285,27 +293,27 @@ int translate(struct sip_msg *msg, str input, str * output, dpl_id_p idp, str * 
 		LM_ERR("invalid input string\n");
 		return -1;
 	}
-
+printf("------------------------------\n");
 	bucket = core_case_hash(&input, NULL, DP_INDEX_HASH_SIZE);
-
+printf("------------------------------\n");
 	/* try to match the input in the corresponding string bucket */
 	for (rulep = idp->rule_hash[bucket].first_rule; rulep; rulep=rulep->next) {
 
-		LM_DBG("Equal operator testing\n");
+		printf("Equal operator testing\n");
 
 		if(rulep->match_exp.len != input.len)
 			continue;
 
-		LM_DBG("Comparing (input %.*s) with (rule %.*s) [%d] and timerec %.*s\n",
+		printf("Comparing (input %.*s) with (rule %.*s) [%d] and timerec %.*s\n",
 				input.len, input.s, rulep->match_exp.len, rulep->match_exp.s,
 				rulep->match_flags, rulep->timerec.len, rulep->timerec.s);
 
 		// Check for Time Period if Set
 		if(rulep->parsed_timerec) {
-			LM_DBG("Timerec exists for rule checking: %.*s\n", rulep->timerec.len, rulep->timerec.s);
+			printf("Timerec exists for rule checking: %.*s\n", rulep->timerec.len, rulep->timerec.s);
 			// Doesn't matches time period continue with next rule
 			if(tmrec_expr_check(rulep->parsed_timerec) < 0) {
-				LM_DBG("Time rule doesn't match: skip next!\n");
+				printf("Time rule doesn't match: skip next!\n");
 				continue;
 			}
 		}
@@ -323,21 +331,22 @@ int translate(struct sip_msg *msg, str input, str * output, dpl_id_p idp, str * 
 
 	/* try to match the input in the regexp bucket */
 	for (rrulep = idp->rule_hash[DP_INDEX_HASH_SIZE].first_rule; rrulep; rrulep=rrulep->next) {
-
+    printf("regxp bucket\n");
 		// Check for Time Period if Set
 		if(rrulep->parsed_timerec) {
-			LM_DBG("Timerec exists for rule checking: %.*s\n", rrulep->timerec.len, rrulep->timerec.s);
+			printf("Timerec exists for rule checking: %.*s\n", rrulep->timerec.len, rrulep->timerec.s);
 			// Doesn't matches time period continue with next rule
 			if(tmrec_expr_check(rrulep->parsed_timerec) < 0) {
-				LM_DBG("Time rule doesn't match: skip next!\n");
+				printf("Time rule doesn't match: skip next!\n");
 				continue;
 			}
 		}
-
-		regexp_res = (test_match(input, rrulep->match_comp, matches, MAX_MATCHES)
+    
+    printf("before test match\n");
+		regexp_res = (test_match(input, rrulep->match_comp, matches)
 					>= 0 ? 0 : -1);
-
-		LM_DBG("Regex operator testing. Got result: %d\n", regexp_res);
+    printf("after test match\n");
+		printf("Regex operator testing. Got result: %d\n", regexp_res);
 
 		if (regexp_res == 0) {
 			break;
@@ -345,7 +354,7 @@ int translate(struct sip_msg *msg, str input, str * output, dpl_id_p idp, str * 
 	}
 
 	if (string_res != 0 && regexp_res != 0) {
-		LM_DBG("No matching rule for input %.*s\n", input.len, input.s);
+		printf("No matching rule for input %.*s\n", input.len, input.s);
 		return -1;
 	}
 
@@ -362,14 +371,14 @@ int translate(struct sip_msg *msg, str input, str * output, dpl_id_p idp, str * 
 	if (!rulep)
 		rulep = rrulep;
 
-	LM_DBG("Found a matching rule %p: pr %i, match_exp %.*s\n",
+	printf("Found a matching rule %p: pr %i, match_exp %.*s\n",
 		rulep, rulep->pr, rulep->match_exp.len, rulep->match_exp.s);
 
 	if(attrs){
 		attrs->len = 0;
 		attrs->s = 0;
 		if(rulep->attrs.len>0) {
-			LM_DBG("the rule's attrs are %.*s\n",
+			printf("the rule's attrs are %.*s\n",
 				rulep->attrs.len, rulep->attrs.s);
 			attrs->s = dp_attrs_buf;
 			if (rulep->attrs.len >= DP_MAX_ATTRS_LEN) {
@@ -383,7 +392,7 @@ int translate(struct sip_msg *msg, str input, str * output, dpl_id_p idp, str * 
 			}
 			attrs->s[attrs->len] = '\0';
 
-			LM_DBG("the copied attributes are: %.*s\n",
+			printf("the copied attributes are: %.*s\n",
 				attrs->len, attrs->s);
 		}
 	}
@@ -397,7 +406,7 @@ int translate(struct sip_msg *msg, str input, str * output, dpl_id_p idp, str * 
 }
 
 
-int test_match(str string, pcre * exp, int * out, int out_max)
+int test_match(str string, pcre2_code * exp, PCRE2_SIZE * out)
 {
 	int i, result_count;
 	char *substring_start;
@@ -405,20 +414,30 @@ int test_match(str string, pcre * exp, int * out, int out_max)
 	UNUSED(substring_start);
 	UNUSED(substring_length);
 
+  printf("Entered test_match\n");
+  printf("string = %s\n", string.s);
+  printf("exp = %p\n", exp);
+
 	if(!exp){
 		LM_ERR("invalid compiled expression\n");
 		return -1;
 	}
 
-	result_count = pcre_exec(
+  pcre2_match_data *match_data = pcre2_match_data_create_from_pattern(exp, NULL);
+  
+  printf("created match_data  = %p\n", match_data);
+
+	result_count = pcre2_match(
 							exp, /* the compiled pattern */
-							NULL, /* no extra data - we didn't study the pattern */
-							string.s, /* the subject string */
-							string.len, /* the length of the subject */
+//							NULL, /* no extra data - we didn't study the pattern */
+							(PCRE2_SPTR)string.s, /* the subject string */
+							(PCRE2_SIZE)string.len, /* the length of the subject */
 							0, /* start at offset 0 in the subject */
 							0, /* default options */
-							out, /* output vector for substring information */
-							out_max); /* number of elements in the output vector */
+							match_data, /* output vector for substring information */
+							NULL);
+
+  printf("after pcre2_match\n");
 
 	if( result_count < 0 )
 		return result_count;
@@ -429,15 +448,17 @@ int test_match(str string, pcre * exp, int * out, int out_max)
 		return result_count;
 	}
 
+  out = pcre2_get_ovector_pointer(match_data);
 
 	for (i = 0; i < result_count; i++)
 	{
 		substring_start = string.s + out[2 * i];
 		substring_length = out[2 * i + 1] - out[2 * i];
-		LM_DBG("test_match:[%d] %.*s\n",i, substring_length, substring_start);
+		printf("test_match:[%d] %.*s\n",i, substring_length, substring_start);
 	}
-
-
+   
+  //pcre2_match_data_free(match_data);
+  printf("after match data free\n");
 	return result_count;
 }
 

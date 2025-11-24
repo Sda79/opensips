@@ -21,7 +21,7 @@ ifeq ($(PCRE_BUILDER),)
 	DEFS += -I$(SYSBASE)/include \
 			-I$(LOCALBASE)/include
 	LIBS += -L$(SYSBASE)/lib \
-			-L$(LOCALBASE)/lib -lpcre
+			-L$(LOCALBASE)/lib -lpcre2-8
 else
 	DEFS += $(shell $(PCRE_BUILDER) --cflags)
 	LIBS += $(shell $(PCRE_BUILDER) --libs)

@@ -169,13 +169,13 @@ int init_data(void)
 			return -1;
 		}
 
-		LM_INFO("no 'default' partition set, assuming '%.*s'\n",
+		printf("no 'default' partition set, assuming '%.*s'\n",
 		        dp_df_part.len, dp_df_part.s);
 	}
 
 	start = dp_hlist;
 	while (start) {
-		LM_DBG("Adding partition with name [%.*s]\n",
+		printf("Adding partition with name [%.*s]\n",
 				start->partition.len, start->partition.s);
 
 		if (!dp_add_connection(start)) {
@@ -207,7 +207,7 @@ void destroy_data(void)
 {
 	dp_connection_list_t *el, *next;
 
-	LM_DBG("Destroying data\n");
+	printf("Destroying data\n");
 	for (el = dp_conns; el && (next = el->next, 1); el = next) {
 		destroy_hash(&el->hash[0]);
 		destroy_hash(&el->hash[1]);
@@ -329,7 +329,7 @@ int dp_load_db(dp_connection_list_p dp_conn, int initial)
 
 
 	if(nr_rows == 0){
-		LM_DBG("no data in the db for partition <%.*s>\n",
+		printf("no data in the db for partition <%.*s>\n",
 			dp_conn->partition.len, dp_conn->partition.s);
 		goto end;
 	}
@@ -467,12 +467,12 @@ int str_to_shm(str src, str * dest)
 dpl_node_t * build_rule(db_val_t * values)
 {
 	tmrec_expr *parsed_timerec;
-	pcre * match_comp, *subst_comp;
+	pcre2_code * match_comp, *subst_comp;
 	struct subst_expr * repl_comp;
 	dpl_node_t * new_rule;
 	str match_exp, subst_exp, repl_exp, attrs, timerec;
 	int matchop;
-	int namecount;
+	uint32_t namecount;
 
 	matchop = VAL_INT(values+2);
 
@@ -489,7 +489,7 @@ dpl_node_t * build_rule(db_val_t * values)
 	GET_STR_VALUE(match_exp, values, 3, 0);
 	if(matchop == REGEX_OP){
 
-		LM_DBG("Compiling %.*s expression with flag: %d\n",
+		printf("Compiling %.*s expression with flag: %d\n",
 				match_exp.len, match_exp.s, VAL_INT(values+4));
 
 		match_comp = wrap_pcre_compile(match_exp.s, VAL_INT(values+4));
@@ -501,7 +501,7 @@ dpl_node_t * build_rule(db_val_t * values)
 		}
 	}
 
-	LM_DBG("building subst rule\n");
+	printf("building subst rule\n");
 	GET_STR_VALUE(subst_exp, values, 5, 1);
 	if(!VAL_NULL(values+5) && subst_exp.s && subst_exp.len){
 		/* subst regexp */
@@ -524,13 +524,12 @@ dpl_node_t * build_rule(db_val_t * values)
 		}
 	}
 
-	pcre_fullinfo(
+	pcre2_pattern_info(
 		subst_comp, /* the compiled pattern */
-		NULL, /* no extra data - we didn't study the pattern */
-		PCRE_INFO_CAPTURECOUNT, /* number of named substrings */
+		PCRE2_INFO_CAPTURECOUNT, /* number of named substrings */
 		&namecount); /* where to put the answer */
 
-	LM_DBG("references:%d , max:%d\n",namecount,
+	printf("references:%d , max:%d\n",namecount,
 		repl_comp?repl_comp->max_pmatch:0);
 
 	if ( (repl_comp!=NULL) && (namecount<repl_comp->max_pmatch) &&
@@ -567,7 +566,7 @@ dpl_node_t * build_rule(db_val_t * values)
 	if( !VAL_NULL(values+7) && attrs.len && attrs.s) {
 		if(str_to_shm(attrs, &new_rule->attrs)!=0)
 			goto err;
-		LM_DBG("attrs are %.*s\n",
+		printf("attrs are %.*s\n",
 			new_rule->attrs.len, new_rule->attrs.s);
 	}
 
@@ -586,7 +585,7 @@ dpl_node_t * build_rule(db_val_t * values)
 
 		new_rule->parsed_timerec = parsed_timerec;
 
-		LM_DBG("timerecs are %.*s\n",
+		printf("timerecs are %.*s\n",
 			new_rule->timerec.len, new_rule->timerec.s);
 	}
 
@@ -636,7 +635,7 @@ int add_rule2hash(dpl_node_t * rule, dp_connection_list_t *conn, int index)
 		crt_idp->dp_id = rule->dpid;
 		crt_idp->rule_hash = (dpl_index_t*)(crt_idp + 1);
 		new_id = 1;
-		LM_DBG("new dpl_id %i\n", rule->dpid);
+		printf("new dpl_id %i\n", rule->dpid);
 	}
 
 	switch (rule->matchop) {
@@ -675,7 +674,7 @@ int add_rule2hash(dpl_node_t * rule, dp_connection_list_t *conn, int index)
 		crt_idp->next = conn->hash[conn->next_index];
 		conn->hash[conn->next_index] = crt_idp;
 	}
-	LM_DBG("added the rule id %i pr %i next %p to the "
+	printf("added the rule id %i pr %i next %p to the "
 		" %i bucket\n", rule->dpid,
 		rule->pr, rule->next, rule->matchop == REGEX_OP ? DP_INDEX_HASH_SIZE : bucket);
 
@@ -728,7 +727,7 @@ void destroy_rule(dpl_node_t * rule){
 	if(!rule)
 		return;
 
-	LM_DBG("destroying rule with priority %i\n",
+	printf("destroying rule with priority %i\n",
 		rule->pr);
 
 	if(rule->match_comp)
@@ -790,10 +789,10 @@ void list_hash(dpl_id_t * hash, rw_lock_t * ref_lock)
 	lock_start_read( ref_lock );
 
 	for(crt_idp = hash; crt_idp; crt_idp = crt_idp->next) {
-		LM_DBG("DPID: %i, pointer %p\n", crt_idp->dp_id, crt_idp);
+		printf("DPID: %i, pointer %p\n", crt_idp->dp_id, crt_idp);
 
 		for (i = 0; i <= DP_INDEX_HASH_SIZE; i++) {
-			LM_DBG("BUCKET %d rules:\n", i);
+			printf("BUCKET %d rules:\n", i);
 
 			for(rulep = crt_idp->rule_hash[i].first_rule; rulep;
 				rulep = rulep->next) {
@@ -810,7 +809,7 @@ void list_hash(dpl_id_t * hash, rw_lock_t * ref_lock)
 
 void list_rule(dpl_node_t * rule)
 {
-	LM_DBG("RULE %p: pr %i next %p match_exp %.*s match_flags %d, "
+	printf("RULE %p: pr %i next %p match_exp %.*s match_flags %d, "
 		"subst_exp %.*s, repl_exp %.*s and attrs %.*s and timerec %.*s\n", rule,
 		rule->pr, rule->next,
 		rule->match_exp.len,	rule->match_exp.s,
@@ -889,7 +888,7 @@ dp_connection_list_p dp_add_connection(dp_head_p head)
 	el->next = dp_conns;
 	dp_conns = el;
 
-	LM_DBG("Added dialplan partition [%.*s] table [%.*s].\n",
+	printf("Added dialplan partition [%.*s] table [%.*s].\n",
 		 head->partition.len, head->partition.s,
 				head->dp_table_name.len, head->dp_table_name.s);
 	return el;
